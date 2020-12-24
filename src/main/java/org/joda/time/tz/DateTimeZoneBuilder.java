@@ -32,6 +32,7 @@ import java.util.Set;
 
 import org.joda.time.Chronology;
 import org.joda.time.DateTime;
+import org.joda.time.DateTimeConstants;
 import org.joda.time.DateTimeUtils;
 import org.joda.time.DateTimeZone;
 import org.joda.time.Period;
@@ -360,11 +361,9 @@ public class DateTimeZoneBuilder {
             rs = new RuleSet(rs);
 
             while ((next = rs.nextTransition(millis, saveMillis)) != null) {
-                if (addTransition(transitions, next)) {
-                    if (tailZone != null) {
-                        // Got the extra transition before DSTZone.
-                        break;
-                    }
+                if (addTransition(transitions, next) && tailZone != null) {
+                    // Got the extra transition before DSTZone.
+                    break;
                 }
                 millis = next.getMillis();
                 saveMillis = next.getSaveMillis();
@@ -403,12 +402,14 @@ public class DateTimeZoneBuilder {
     private boolean addTransition(ArrayList<Transition> transitions, Transition tr) {
         int size = transitions.size();
         if (size == 0) {
+//            System.out.println("Adding   " + tr);
             transitions.add(tr);
             return true;
         }
 
         Transition last = transitions.get(size - 1);
         if (!tr.isTransitionFrom(last)) {
+//            System.out.println("Rejected " + tr);
             return false;
         }
 
@@ -425,11 +426,15 @@ public class DateTimeZoneBuilder {
 
         if (newLocal != lastLocal) {
             transitions.add(tr);
+//            System.out.println("Adding   " + tr);
             return true;
         }
-
-        transitions.remove(size - 1);
-        return addTransition(transitions, tr);
+        Transition previous = transitions.remove(size - 1);
+        Transition adjusted = tr.withMillis(previous.getMillis());
+//        System.out.println("Current  " + tr);
+//        System.out.println("Previous " + previous);
+//        System.out.println("Adjusted " + adjusted);
+        return addTransition(transitions, adjusted);
     }
 
     /**
@@ -443,7 +448,9 @@ public class DateTimeZoneBuilder {
         if (out instanceof DataOutput) {
             writeTo(zoneID, (DataOutput)out);
         } else {
-            writeTo(zoneID, (DataOutput)new DataOutputStream(out));
+            DataOutputStream dout = new DataOutputStream(out);
+            writeTo(zoneID, (DataOutput)dout);
+            dout.flush();
         }
     }
 
@@ -578,6 +585,8 @@ public class DateTimeZoneBuilder {
                     next = setDayOfWeek(chrono, next);
                 }
             }
+            next = chrono.millisOfDay().set(next, 0);
+            next = chrono.millisOfDay().add(next, iMillisOfDay);
 
             // Convert from local time to UTC.
             return next - offset;
@@ -620,6 +629,8 @@ public class DateTimeZoneBuilder {
                     prev = setDayOfWeek(chrono, prev);
                 }
             }
+            prev = chrono.millisOfDay().set(prev, 0);
+            prev = chrono.millisOfDay().add(prev, iMillisOfDay);
 
             // Convert from local time to UTC.
             return prev - offset;
@@ -642,7 +653,6 @@ public class DateTimeZoneBuilder {
             return false;
         }
 
-        /*
         public String toString() {
             return
                 "[OfYear]\n" + 
@@ -653,7 +663,6 @@ public class DateTimeZoneBuilder {
                 "AdvanceDayOfWeek: " + iAdvance + '\n' +
                 "MillisOfDay: " + iMillisOfDay + '\n';
         }
-        */
 
         public void writeTo(DataOutput out) throws IOException {
             out.writeByte(iMode);
@@ -803,6 +812,11 @@ public class DateTimeZoneBuilder {
         Recurrence renameAppend(String appendNameKey) {
             return rename((iNameKey + appendNameKey).intern());
         }
+        
+        @Override
+        public String toString() {
+            return iOfYear + " named " + iNameKey + " at " + iSaveMillis;
+        }
     }
 
     /**
@@ -874,6 +888,11 @@ public class DateTimeZoneBuilder {
 
             return next;
         }
+        
+        @Override
+        public String toString() {
+            return iFromYear + " to " + iToYear + " using " + iRecurrence;
+        }
     }
 
     private static final class Transition {
@@ -924,6 +943,10 @@ public class DateTimeZoneBuilder {
             return iWallOffset - iStandardOffset;
         }
 
+        public Transition withMillis(long millis) {
+            return new Transition(millis, iNameKey, iWallOffset, iStandardOffset);
+        }
+
         /**
          * There must be a change in the millis, wall offsets or name keys.
          */
@@ -933,8 +956,13 @@ public class DateTimeZoneBuilder {
             }
             return iMillis > other.iMillis &&
                 (iWallOffset != other.iWallOffset ||
-                 //iStandardOffset != other.iStandardOffset ||
+                 iStandardOffset != other.iStandardOffset ||
                  !(iNameKey.equals(other.iNameKey)));
+        }
+        
+        @Override
+        public String toString() {
+            return new DateTime(iMillis, DateTimeZone.UTC) + " " + iStandardOffset + " " + iWallOffset;
         }
     }
 
@@ -1159,6 +1187,12 @@ public class DateTimeZoneBuilder {
                 }
             }
             return null;
+        }
+        
+        @Override
+        public String toString() {
+            return iInitialNameKey + " initial: " + iInitialSaveMillis + " std: " + iStandardOffset +
+                    " upper: " + iUpperYear + " " + iUpperOfYear + " " + iRules;
         }
     }
 
@@ -1443,7 +1477,7 @@ public class DateTimeZoneBuilder {
                         curNameKey.equals(zoneNameData[2]) &&
                         curNameKey.equals(zoneNameData[4])) {
                     
-                    if (ZoneInfoCompiler.verbose()) {
+                    if (ZoneInfoLogger.verbose()) {
                         System.out.println("Fixing duplicate name key - " + nextNameKey);
                         System.out.println("     - " + new DateTime(trans[i], chrono) +
                                            " - " + new DateTime(trans[i + 1], chrono));
@@ -1460,7 +1494,7 @@ public class DateTimeZoneBuilder {
             if (tailZone != null) {
                 if (tailZone.iStartRecurrence.getNameKey()
                     .equals(tailZone.iEndRecurrence.getNameKey())) {
-                    if (ZoneInfoCompiler.verbose()) {
+                    if (ZoneInfoLogger.verbose()) {
                         System.out.println("Fixing duplicate recurrent name key - " +
                                            tailZone.iStartRecurrence.getNameKey());
                     }

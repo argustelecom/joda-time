@@ -9,7 +9,7 @@
   <artifactId>joda-time</artifactId>
   <packaging>jar</packaging>
   <name>Joda-Time</name>
-  <version>2.7-ARGUS</version>
+  <version>2.7-ARGUS-2</version>
   <description>Date and time library to replace JDK date handling</description>
   <url>http://www.joda.org/joda-time/</url>
 
@@ -285,10 +285,8 @@
             <argument>europe</argument>
             <argument>northamerica</argument>
             <argument>southamerica</argument>
-            <argument>pacificnew</argument>
             <argument>etcetera</argument>
             <argument>backward</argument>
-            <argument>systemv</argument>
           </arguments>
         </configuration>
       </plugin>
@@ -751,6 +749,41 @@
         <additionalparam></additionalparam>
       </properties>
     </profile>
+    <profile>
+      <id>attach-additional-javadoc</id>
+      <activation>
+        <property>
+          <name>maven.javadoc.skip</name>
+          <value>!true</value>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>build-helper-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>attach-no-tzdb-javadoc</id>
+                <phase>package</phase>
+                <goals>
+                  <goal>attach-artifact</goal>
+                </goals>
+                <configuration>
+                  <artifacts>
+                    <artifact>
+                      <file>${project.build.directory}/${project.artifactId}-${project.version}-javadoc.jar</file>
+                      <type>jar</type>
+                      <classifier>no-tzdb-javadoc</classifier>
+                    </artifact>
+                  </artifacts>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
   </profiles>
 
   <!-- ==================================================================== -->
@@ -766,7 +799,7 @@
     <maven-gpg-plugin.version>1.4</maven-gpg-plugin.version>
     <maven-install-plugin.version>2.5.1</maven-install-plugin.version>
     <maven-jar-plugin.version>2.4</maven-jar-plugin.version>
-    <maven-javadoc-plugin.version>2.9.1</maven-javadoc-plugin.version>
+    <maven-javadoc-plugin.version>3.0.0-M1</maven-javadoc-plugin.version>
     <maven-jxr-plugin.version>2.3</maven-jxr-plugin.version>
     <maven-plugin-plugin.version>3.2</maven-plugin-plugin.version>
     <maven-pmd-plugin.version>3.0.1</maven-pmd-plugin.version>
@@ -779,9 +812,9 @@
     <maven-surefire-report-plugin.version>2.16</maven-surefire-report-plugin.version>
     <maven-toolchains-plugin.version>1.0</maven-toolchains-plugin.version>
     <!-- Properties for maven-compiler-plugin -->
-    <maven.compiler.compilerVersion>1.5</maven.compiler.compilerVersion>
-    <maven.compiler.source>1.5</maven.compiler.source>
-    <maven.compiler.target>1.5</maven.compiler.target>
+    <maven.compiler.compilerVersion>1.8</maven.compiler.compilerVersion>
+    <maven.compiler.source>1.8</maven.compiler.source>
+    <maven.compiler.target>1.8</maven.compiler.target>
     <maven.compiler.fork>true</maven.compiler.fork>
     <maven.compiler.verbose>true</maven.compiler.verbose>
     <maven.compiler.optimize>true</maven.compiler.optimize>
@@ -795,6 +828,6 @@
     <!-- Other properties -->
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <tz.database.version>2014j</tz.database.version>
+    <tz.database.version>2020e</tz.database.version>
   </properties>
 </project>

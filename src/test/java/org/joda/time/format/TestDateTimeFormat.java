@@ -625,13 +625,13 @@ public class TestDateTimeFormat extends TestCase {
     public void testFormat_halfdayOfDay() {
         DateTime dt = new DateTime(2004, 6, 9, 10, 20, 30, 40, UTC);
         DateTimeFormatter f = DateTimeFormat.forPattern("a").withLocale(Locale.UK);
-        assertEquals(dt.toString(), "AM", f.print(dt));
-        
+        assertEquals(dt.toString(), "AM", f.print(dt).toUpperCase(Locale.ENGLISH));
+
         dt = dt.withZone(NEWYORK);
-        assertEquals(dt.toString(), "AM", f.print(dt));
-        
+        assertEquals(dt.toString(), "AM", f.print(dt).toUpperCase(Locale.ENGLISH));
+
         dt = dt.withZone(TOKYO);
-        assertEquals(dt.toString(), "PM", f.print(dt));
+        assertEquals(dt.toString(), "PM", f.print(dt).toUpperCase(Locale.ENGLISH));
     }
 
     //-----------------------------------------------------------------------
@@ -753,12 +753,12 @@ public class TestDateTimeFormat extends TestCase {
     //-----------------------------------------------------------------------
     public void testFormat_zoneText() {
         DateTime dt = new DateTime(2004, 6, 9, 10, 20, 30, 40, UTC);
-        DateTimeFormatter f = DateTimeFormat.forPattern("z").withLocale(Locale.UK);
+        DateTimeFormatter f = DateTimeFormat.forPattern("z").withLocale(Locale.ENGLISH);
         assertEquals(dt.toString(), "UTC", f.print(dt));
-        
+
         dt = dt.withZone(NEWYORK);
         assertEquals(dt.toString(), "EDT", f.print(dt));
-        
+
         dt = dt.withZone(TOKYO);
         assertEquals(dt.toString(), "JST", f.print(dt));
     }
@@ -996,17 +996,17 @@ public class TestDateTimeFormat extends TestCase {
     //-----------------------------------------------------------------------
     public void testFormatParse_textHalfdayAM_UK() {
         DateTimeFormatter dateFormatter = new DateTimeFormatterBuilder()
-            .appendLiteral('$')
-            .appendClockhourOfHalfday(2)
-            .appendLiteral('-')
-            .appendHalfdayOfDayText()
-            .appendLiteral('-')
-            .appendYear(4, 4)
-            .toFormatter()
-            .withLocale(Locale.UK).withZoneUTC();
-        
+                .appendLiteral('$')
+                .appendClockhourOfHalfday(2)
+                .appendLiteral('-')
+                .appendHalfdayOfDayText()
+                .appendLiteral('-')
+                .appendYear(4, 4)
+                .toFormatter()
+                .withLocale(Locale.UK).withZoneUTC();
+
         String str = new DateTime(2007, 6, 23, 18, 0, 0, 0, UTC).toString(dateFormatter);
-        assertEquals("$06-PM-2007", str);
+        assertEquals("$06-PM-2007", str.toUpperCase(Locale.ENGLISH));
         DateTime date = dateFormatter.parseDateTime(str);
         check(date, 2007, 1, 1);
     }
@@ -1059,14 +1059,14 @@ public class TestDateTimeFormat extends TestCase {
 
     public void testFormatParse_textEraBC_France() {
         DateTimeFormatter dateFormatter = new DateTimeFormatterBuilder()
-            .appendLiteral('$')
-            .appendEraText()
-            .appendYear(4, 4)
-            .toFormatter()
-            .withLocale(Locale.FRANCE).withZoneUTC();
-        
+                .appendLiteral('$')
+                .appendEraText()
+                .appendYear(4, 4)
+                .toFormatter()
+                .withLocale(Locale.FRANCE).withZoneUTC();
+
         String str = new DateTime(-1, 6, 23, 0, 0, 0, 0, UTC).toString(dateFormatter);
-        assertEquals("$BC-0001", str);
+        assertTrue(str.equals("$BC-0001") || str.equals("$av. J.-C.-0001"));
         DateTime date = dateFormatter.parseDateTime(str);
         check(date, -1, 1, 1);
     }

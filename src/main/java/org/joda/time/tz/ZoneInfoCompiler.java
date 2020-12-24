@@ -29,9 +29,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.StringTokenizer;
 import java.util.TreeMap;
-import java.util.Map.Entry;
 
 import org.joda.time.Chronology;
 import org.joda.time.DateTime;
@@ -52,7 +52,7 @@ import org.joda.time.format.ISODateTimeFormat;
  * <p>
  * Although this tool is similar to zic, the binary formats are not
  * compatible. The latest IANA time zone database files may be obtained
- * <a href="http://www.iana.org/time-zones">here</a>.
+ * <a href="https://www.iana.org/time-zones">here</a>.
  * <p>
  * ZoneInfoCompiler is mutable and not thread-safe, although the main method
  * may be safely invoked by multiple threads.
@@ -64,20 +64,6 @@ public class ZoneInfoCompiler {
     static DateTimeOfYear cStartOfYear;
 
     static Chronology cLenientISO;
-
-    static ThreadLocal<Boolean> cVerbose = new ThreadLocal<Boolean>() {
-        protected Boolean initialValue() {
-            return Boolean.FALSE;
-        }
-    };
-
-    /**
-     * Gets a flag indicating that verbose logging is required.
-     * @return true to log verbosely
-     */
-    public static boolean verbose() {
-        return cVerbose.get();
-    }
 
     //-----------------------------------------------------------------------
     /**
@@ -132,7 +118,7 @@ public class ZoneInfoCompiler {
             sources[j] = inputDir == null ? new File(args[i]) : new File(inputDir, args[i]);
         }
 
-        cVerbose.set(verbose);
+        ZoneInfoLogger.set(verbose);
         ZoneInfoCompiler zic = new ZoneInfoCompiler();
         zic.compile(outputDir, sources);
     }
@@ -163,6 +149,11 @@ public class ZoneInfoCompiler {
      * @param zimap maps string ids to DateTimeZone objects.
      */
     static void writeZoneInfoMap(DataOutputStream dout, Map<String, DateTimeZone> zimap) throws IOException {
+
+        if ( dout == null ){
+            throw new IllegalArgumentException("DataOutputStream must not be null.");
+        }
+
         // Build the string pool.
         Map<String, Short> idToIndex = new HashMap<String, Short>(zimap.size());
         TreeMap<Short, String> indexToId = new TreeMap<Short, String>();
@@ -206,7 +197,7 @@ public class ZoneInfoCompiler {
     }
 
     static int parseYear(String str, int def) {
-        str = str.toLowerCase();
+        str = str.toLowerCase(Locale.ENGLISH);
         if (str.equals("minimum") || str.equals("min")) {
             return Integer.MIN_VALUE;
         } else if (str.equals("maximum") || str.equals("max")) {
@@ -277,6 +268,7 @@ public class ZoneInfoCompiler {
         long end = ISOChronology.getInstanceUTC().year().set(0, 2050);
 
         int offset = tz.getOffset(millis);
+        int stdOffset = tz.getStandardOffset(millis);
         String key = tz.getNameKey(millis);
 
         List<Long> transitions = new ArrayList<Long>();
@@ -290,10 +282,10 @@ public class ZoneInfoCompiler {
             millis = next;
 
             int nextOffset = tz.getOffset(millis);
+            int nextStdOffset = tz.getStandardOffset(millis);
             String nextKey = tz.getNameKey(millis);
 
-            if (offset == nextOffset
-                && key.equals(nextKey)) {
+            if (offset == nextOffset && stdOffset == nextStdOffset && key.equals(nextKey)) {
                 System.out.println("*d* Error in " + tz.getID() + " "
                                    + new DateTime(millis,
                                                   ISOChronology.getInstanceUTC()));
@@ -350,12 +342,16 @@ public class ZoneInfoCompiler {
     private List<Zone> iZones;
 
     // List String pairs to link.
-    private List<String> iLinks;
+    private List<String> iGoodLinks;
+
+    // List String pairs to link.
+    private List<String> iBackLinks;
 
     public ZoneInfoCompiler() {
         iRuleSets = new HashMap<String, RuleSet>();
         iZones = new ArrayList<Zone>();
-        iLinks = new ArrayList<String>();
+        iGoodLinks = new ArrayList<String>();
+        iBackLinks = new ArrayList<String>();
     }
 
     /**
@@ -367,17 +363,22 @@ public class ZoneInfoCompiler {
     public Map<String, DateTimeZone> compile(File outputDir, File[] sources) throws IOException {
         if (sources != null) {
             for (int i=0; i<sources.length; i++) {
-                BufferedReader in = new BufferedReader(new FileReader(sources[i]));
-                parseDataFile(in);
-                in.close();
+                BufferedReader in = null;
+                try {
+                    System.out.println("Parsing " + sources[i].getName());
+                    in = new BufferedReader(new FileReader(sources[i]));
+                    parseDataFile(in, "backward".equals(sources[i].getName()));
+                } finally {
+                    if (in != null) {
+                        in.close();
+                    }
+                }
             }
         }
 
         if (outputDir != null) {
-            if (!outputDir.exists()) {
-                if (!outputDir.mkdirs()) {
-                    throw new IOException("Destination directory doesn't exist and cannot be created: " + outputDir);
-                }
+            if (!outputDir.exists() && !outputDir.mkdirs()) {
+                throw new IOException("Destination directory doesn't exist and cannot be created: " + outputDir);
             }
             if (!outputDir.isDirectory()) {
                 throw new IOException("Destination is not a directory: " + outputDir);
@@ -385,60 +386,69 @@ public class ZoneInfoCompiler {
         }
 
         Map<String, DateTimeZone> map = new TreeMap<String, DateTimeZone>();
+        Map<String, Zone> sourceMap = new TreeMap<String, Zone>();
 
         System.out.println("Writing zoneinfo files");
-        for (int i=0; i<iZones.size(); i++) {
+        // write out the standard entries
+        for (int i = 0; i < iZones.size(); i++) {
             Zone zone = iZones.get(i);
             DateTimeZoneBuilder builder = new DateTimeZoneBuilder();
             zone.addToBuilder(builder, iRuleSets);
-            final DateTimeZone original = builder.toDateTimeZone(zone.iName, true);
-            DateTimeZone tz = original;
+            System.out.println("Writing " + zone.iName);
+            DateTimeZone tz = builder.toDateTimeZone(zone.iName, true);
             if (test(tz.getID(), tz)) {
                 map.put(tz.getID(), tz);
+                sourceMap.put(tz.getID(), zone);
                 if (outputDir != null) {
-                    if (ZoneInfoCompiler.verbose()) {
-                        System.out.println("Writing " + tz.getID());
-                    }
-                    File file = new File(outputDir, tz.getID());
-                    if (!file.getParentFile().exists()) {
-                        file.getParentFile().mkdirs();
-                    }
-                    OutputStream out = new FileOutputStream(file);
-                    try {
-                        builder.writeTo(zone.iName, out);
-                    } finally {
-                        out.close();
-                    }
-
-                    // Test if it can be read back.
-                    InputStream in = new FileInputStream(file);
-                    DateTimeZone tz2 = DateTimeZoneBuilder.readFrom(in, tz.getID());
-                    in.close();
-
-                    if (!original.equals(tz2)) {
-                        System.out.println("*e* Error in " + tz.getID() +
-                                           ": Didn't read properly from file");
-                    }
+                    writeZone(outputDir, builder, tz);
                 }
             }
         }
 
-        for (int pass=0; pass<2; pass++) {
-            for (int i=0; i<iLinks.size(); i += 2) {
-                String id = iLinks.get(i);
-                String alias = iLinks.get(i + 1);
+        // revive zones from "good" links
+        for (int i = 0; i < iGoodLinks.size(); i += 2) {
+            String baseId = iGoodLinks.get(i);
+            String alias = iGoodLinks.get(i + 1);
+            Zone sourceZone = sourceMap.get(baseId);
+            if (sourceZone == null) {
+                System.out.println("Cannot find source zone '" + baseId + "' to link alias '" + alias + "' to");
+            } else {
+                DateTimeZoneBuilder builder = new DateTimeZoneBuilder();
+                sourceZone.addToBuilder(builder, iRuleSets);
+                DateTimeZone revived = builder.toDateTimeZone(alias, true);
+                if (test(revived.getID(), revived)) {
+                    map.put(revived.getID(), revived);
+                    if (outputDir != null) {
+                        writeZone(outputDir, builder, revived);
+                    }
+                }
+                map.put(revived.getID(), revived);
+                if (ZoneInfoLogger.verbose()) {
+                    System.out.println("Good link: " + alias + " -> " + baseId + " revived");
+                }
+            }
+        }
+
+        // store "back" links as aliases (where name is permanently mapped
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < iBackLinks.size(); i += 2) {
+                String id = iBackLinks.get(i);
+                String alias = iBackLinks.get(i + 1);
                 DateTimeZone tz = map.get(id);
                 if (tz == null) {
                     if (pass > 0) {
-                        System.out.println("Cannot find time zone '" + id +
-                                           "' to link alias '" + alias + "' to");
+                        System.out.println("Cannot find time zone '" + id + "' to link alias '" + alias + "' to");
                     }
                 } else {
                     map.put(alias, tz);
+                    if (ZoneInfoLogger.verbose()) {
+                        System.out.println("Back link: " + alias + " -> " + tz.getID());
+                    }
                 }
             }
         }
 
+        // write map that unites the time-zone data, pointing aliases and real zones at files
         if (outputDir != null) {
             System.out.println("Writing ZoneInfoMap");
             File file = new File(outputDir, "ZoneInfoMap");
@@ -461,7 +471,33 @@ public class ZoneInfoCompiler {
         return map;
     }
 
-    public void parseDataFile(BufferedReader in) throws IOException {
+    private void writeZone(File outputDir, DateTimeZoneBuilder builder, DateTimeZone tz) throws IOException {
+        if (ZoneInfoLogger.verbose()) {
+            System.out.println("Writing " + tz.getID());
+        }
+        File file = new File(outputDir, tz.getID());
+        if (!file.getParentFile().exists()) {
+            file.getParentFile().mkdirs();
+        }
+        OutputStream out = new FileOutputStream(file);
+        try {
+            builder.writeTo(tz.getID(), out);
+        } finally {
+            out.close();
+        }
+
+        // Test if it can be read back.
+        InputStream in = new FileInputStream(file);
+        DateTimeZone tz2 = DateTimeZoneBuilder.readFrom(in, tz.getID());
+        in.close();
+
+        if (!tz.equals(tz2)) {
+            System.out.println("*e* Error in " + tz.getID() +
+                               ": Didn't read properly from file");
+        }
+    }
+
+    public void parseDataFile(BufferedReader in, boolean backward) throws IOException {
         Zone zone = null;
         String line;
         while ((line = in.readLine()) != null) {
@@ -504,10 +540,23 @@ public class ZoneInfoCompiler {
                         rs.addRule(r);
                     }
                 } else if (token.equalsIgnoreCase("Zone")) {
+                    if (st.countTokens() < 4) {
+                        throw new IllegalArgumentException("Attempting to create a Zone from an incomplete tokenizer");
+                    }
                     zone = new Zone(st);
                 } else if (token.equalsIgnoreCase("Link")) {
-                    iLinks.add(st.nextToken());
-                    iLinks.add(st.nextToken());
+                    String real = st.nextToken();
+                    String alias = st.nextToken();
+                    // links in "backward" are deprecated names
+                    // links in other files should be kept
+                    // special case a few to try to repair terrible damage to tzdb
+                    if (backward || alias.equals("US/Pacific-New") || alias.startsWith("Etc/") || alias.equals("GMT")) {
+                        iBackLinks.add(real);
+                        iBackLinks.add(alias);
+                    } else {
+                        iGoodLinks.add(real);
+                        iGoodLinks.add(alias);
+                    }
                 } else {
                     System.out.println("Unknown line: " + line);
                 }
@@ -660,6 +709,9 @@ public class ZoneInfoCompiler {
         public final String iLetterS;
 
         Rule(StringTokenizer st) {
+            if (st.countTokens() < 6) {
+                throw new IllegalArgumentException("Attempting to create a Rule from an incomplete tokenizer");
+            }
             iName = st.nextToken().intern();
             iFromYear = parseYear(st.nextToken(), 0);
             iToYear = parseYear(st.nextToken(), iFromYear);
@@ -672,19 +724,30 @@ public class ZoneInfoCompiler {
             iLetterS = parseOptional(st.nextToken());
         }
 
+        // creates a rule to go before the specified rule
+        Rule(Rule after) {
+            iName = after.iName;
+            iFromYear = 1800;
+            iToYear = after.iFromYear;
+            iType = null;
+            iDateTimeOfYear = after.iDateTimeOfYear;  // does not matter
+            iSaveMillis = 0;
+            iLetterS = after.iLetterS;
+        }
+
         /**
          * Adds a recurring savings rule to the builder.
          */
-        public void addRecurring(DateTimeZoneBuilder builder, String nameFormat) {
-            String nameKey = formatName(nameFormat);
-            iDateTimeOfYear.addRecurring
-                (builder, nameKey, iSaveMillis, iFromYear, iToYear);
+        public void addRecurring(DateTimeZoneBuilder builder, int negativeSave, String nameFormat) {
+            int saveMillis = iSaveMillis + -negativeSave;
+            String nameKey = formatName(nameFormat, saveMillis, iLetterS);
+            iDateTimeOfYear.addRecurring(builder, nameKey, saveMillis, iFromYear, iToYear);
         }
 
-        private String formatName(String nameFormat) {
+        private static String formatName(String nameFormat, int saveMillis, String letterS) {
             int index = nameFormat.indexOf('/');
             if (index > 0) {
-                if (iSaveMillis == 0) {
+                if (saveMillis == 0) {
                     // Extract standard name.
                     return nameFormat.substring(0, index).intern();
                 } else {
@@ -698,10 +761,10 @@ public class ZoneInfoCompiler {
             String left = nameFormat.substring(0, index);
             String right = nameFormat.substring(index + 2);
             String name;
-            if (iLetterS == null) {
+            if (letterS == null) {
                 name = left.concat(right);
             } else {
-                name = left + iLetterS + right;
+                name = left + letterS + right;
             }
             return name.intern();
         }
@@ -737,10 +800,41 @@ public class ZoneInfoCompiler {
         /**
          * Adds recurring savings rules to the builder.
          */
-        public void addRecurring(DateTimeZoneBuilder builder, String nameFormat) {
-            for (int i=0; i<iRules.size(); i++) {
+        public void addRecurring(DateTimeZoneBuilder builder, int standardMillis, String nameFormat) {
+            // a hack is necessary to remove negative SAVE values from the input tzdb file
+            // negative save values cause the standard offset to be set in the summer instead of the winter
+            // this causes the wrong name to be chosen from the CLDR data
+
+            // check if the ruleset has negative SAVE values
+            int negativeSave = 0;
+            for (int i = 0; i < iRules.size(); i++) {
                 Rule rule = iRules.get(i);
-                rule.addRecurring(builder, nameFormat);
+                if (rule.iSaveMillis < 0) {
+                    negativeSave = Math.min(negativeSave, rule.iSaveMillis);
+                }
+            }
+
+            // if negative SAVE values, then patch standard millis and name format
+            if (negativeSave < 0) {
+                System.out.println("Fixed negative save values for rule '" + iRules.get(0).iName + "'");
+                standardMillis += negativeSave;
+                int slashPos = nameFormat.indexOf("/");
+                if (slashPos > 0) {
+                    nameFormat = nameFormat.substring(slashPos + 1) + "/" + nameFormat.substring(0, slashPos);
+                }
+            }
+            builder.setStandardOffset(standardMillis);
+
+            // add a fake rule that predates all other rules to ensure standard=summer (see Namibia)
+            if (negativeSave < 0) {
+                Rule rule = new Rule(iRules.get(0));
+                rule.addRecurring(builder, negativeSave, nameFormat);
+            }
+
+            // add each rule, passing through the negative save to alter the actual iSaveMillis value that is used
+            for (int i = 0; i < iRules.size(); i++) {
+                Rule rule = iRules.get(i);
+                rule.addRecurring(builder, negativeSave, nameFormat);
             }
         }
     }
@@ -807,23 +901,24 @@ public class ZoneInfoCompiler {
                                          Map<String, RuleSet> ruleSets)
         {
             for (; zone != null; zone = zone.iNext) {
-                builder.setStandardOffset(zone.iOffsetMillis);
-
                 if (zone.iRules == null) {
+                    builder.setStandardOffset(zone.iOffsetMillis);
                     builder.setFixedSavings(zone.iFormat, 0);
                 } else {
                     try {
                         // Check if iRules actually just refers to a savings.
                         int saveMillis = parseTime(zone.iRules);
+                        builder.setStandardOffset(zone.iOffsetMillis);
                         builder.setFixedSavings(zone.iFormat, saveMillis);
                     }
                     catch (Exception e) {
+                        // Zone is using a RuleSet for this segment of the timeline
                         RuleSet rs = ruleSets.get(zone.iRules);
                         if (rs == null) {
                             throw new IllegalArgumentException
                                 ("Rules not found: " + zone.iRules);
                         }
-                        rs.addRecurring(builder, zone.iFormat);
+                        rs.addRecurring(builder, zone.iOffsetMillis, zone.iFormat);
                     }
                 }
 
